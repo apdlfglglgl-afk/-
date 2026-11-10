@@ -79,3 +79,36 @@ export async function clearAllTermImages(): Promise<void> {
     tx.onerror = () => reject(tx.error);
   });
 }
+
+/**
+ * 1~66번 등록된 사진 데이터를 백업 JSON 파일로 다운로드합니다.
+ * (GitHub Pages나 다른 컴퓨터로 사진을 옮길 때 1초 만에 복원 가능)
+ */
+export function exportTermImagesJson(images: Record<number, string>): void {
+  const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(images, null, 2));
+  const downloadAnchor = document.createElement('a');
+  downloadAnchor.setAttribute('href', dataStr);
+  downloadAnchor.setAttribute('download', `semi_glossary_images_${new Date().toISOString().slice(0, 10)}.json`);
+  document.body.appendChild(downloadAnchor);
+  downloadAnchor.click();
+  downloadAnchor.remove();
+}
+
+/**
+ * 백업 JSON 파일로부터 사진 데이터를 복원하여 IndexedDB에 저장합니다.
+ */
+export async function importTermImagesFromJson(jsonString: string): Promise<Record<number, string>> {
+  const parsed = JSON.parse(jsonString) as Record<string | number, string>;
+  const result: Record<number, string> = {};
+
+  for (const [key, dataUrl] of Object.entries(parsed)) {
+    const no = Number(key);
+    if (!isNaN(no) && no >= 1 && typeof dataUrl === 'string') {
+      await saveTermImage(no, dataUrl);
+      result[no] = dataUrl;
+    }
+  }
+
+  return result;
+}
+

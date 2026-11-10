@@ -7,6 +7,8 @@ interface BatchImageUploaderProps {
   onClose: () => void;
   onSaveBatch: (imagesMap: Record<number, string>) => void;
   existingCount: number;
+  onExportJson?: () => void;
+  onImportJson?: (jsonString: string) => void;
 }
 
 interface MatchCandidate {
@@ -22,21 +24,44 @@ export const BatchImageUploader: React.FC<BatchImageUploaderProps> = ({
   onClose,
   onSaveBatch,
   existingCount,
+  onExportJson,
+  onImportJson,
 }) => {
   const [candidates, setCandidates] = useState<MatchCandidate[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const jsonFileInputRef = useRef<HTMLInputElement>(null);
 
   if (!isOpen) return null;
 
-  // 파일명 분석하여 66개 용어와 1:1 자동 매칭
+  // 파일명 분석하여 66개 용어와 1:1 스마트 자동 매칭
   const matchFileToTerm = (fileName: string): { no: number | null; term?: string; reason?: string } => {
-    const cleanName = fileName.toLowerCase().replace(/[\-_]/g, ' ');
+    // 확장자 제거 및 소문자화
+    const nameWithoutExt = fileName.replace(/\.[^/.]+$/, '');
+    const cleanName = nameWithoutExt.toLowerCase();
 
-    // 1. 파일명 앞부분 또는 전체에 번호가 적힌 경우 (예: "1.jpg", "01.png", "item_7.jpg", "no.12_ESC.png")
-    const numMatch = cleanName.match(/(?:^|\b|no|item|img)?\s*([0-9]{1,2})\b/);
-    if (numMatch && numMatch[1]) {
-      const num = parseInt(numMatch[1], 10);
+    // 1. 용어명 또는 은어 매칭 우선 확인 (가장 정확함)
+    for (const item of GLOSSARY_DATA) {
+      const termClean = item.termKo.toLowerCase().replace(/[\/\(\)\s\-_\.]/g, '');
+      const pureFileName = cleanName.replace(/[\/\(\)\s\-_\.]/g, '');
+      if (termClean.length >= 2 && (pureFileName.includes(termClean) || termClean.includes(pureFileName))) {
+        return { no: item.no, term: item.termKo, reason: `용어명 "${item.termKo}" 일치` };
+      }
+
+      // 은어 키워드 매칭
+      const slangs = item.slang.split(',').map((s) => s.trim().toLowerCase().replace(/[\/\(\)\s\-_\.]/g, ''));
+      for (const slang of slangs) {
+        if (slang.length >= 2 && pureFileName.includes(slang)) {
+          return { no: item.no, term: item.termKo, reason: `현장 호칭 "${slang}" 일치` };
+        }
+      }
+    }
+
+    // 2. 파일명에 포함된 1~66 숫자 매칭 (예: "1", "01", "image1", "item_12", "(5)", "[10]")
+    // 2024, 2026 등 4자리 연도나 긴 타임스탬프는 제외
+    const matches = cleanName.match(/(?:^|[^0-9])([0-9]{1,2})(?:$|[^0-9])/);
+    if (matches && matches[1]) {
+      const num = parseInt(matches[1], 10);
       if (num >= 1 && num <= GLOSSARY_DATA.length) {
         const item = GLOSSARY_DATA.find((d) => d.no === num);
         if (item) {
@@ -45,24 +70,63 @@ export const BatchImageUploader: React.FC<BatchImageUploaderProps> = ({
       }
     }
 
-    // 2. 파일명에 용어 한글명이나 은어가 포함된 경우 (예: "단결정.png", "포커스링_실물.jpg")
-    for (const item of GLOSSARY_DATA) {
-      const termClean = item.termKo.toLowerCase().replace(/[\/\(\)\s]/g, '');
-      const pureFileName = cleanName.replace(/[\/\(\)\s]/g, '');
-      if (pureFileName.includes(termClean) || termClean.includes(pureFileName)) {
-        return { no: item.no, term: item.termKo, reason: `용어명 "${item.termKo}" 일치` };
-      }
-
-      // 은어 키워드 매칭
-      const slangs = item.slang.split(',').map((s) => s.trim().toLowerCase().replace(/[\/\(\)\s]/g, ''));
-      for (const slang of slangs) {
-        if (slang && pureFileName.includes(slang)) {
-          return { no: item.no, term: item.termKo, reason: `현장 호칭 "${slang}" 일치` };
-        }
-      }
-    }
-
     return { no: null };
+  };
+
+  // 1번부터 차례대로 순서 자동 배정
+  const handleAssignSequentially = () => {
+    setCandidates((prev) =>
+      prev.map((c, idx) => {
+        const num = idx + 1;
+        if (num <= GLOSSARY_DATA.length) {
+          const item = GLOSSARY_DATA.find((d) => d.no === num);
+          return {
+            ...c,
+            matchedNo: num,
+            matchedTerm: item ? item.termKo : undefined,
+            matchReason: `순서대로 No.${num} 배정`,
+          };
+        }
+        return c;
+      })
+    );
+  };
+
+  // 파일명 기준 가나다/자연수 정렬 후 배정
+  const handleSortAndAssign = () => {
+    const sorted = [...candidates].sort((a, b) =>
+      a.file.name.localeCompare(b.file.name, undefined, { numeric: true, sensitivity: 'base' })
+    );
+    setCandidates(
+      sorted.map((c, idx) => {
+        const num = idx + 1;
+        if (num <= GLOSSARY_DATA.length) {
+          const item = GLOSSARY_DATA.find((d) => d.no === num);
+          return {
+            ...c,
+            matchedNo: num,
+            matchedTerm: item ? item.termKo : undefined,
+            matchReason: `정렬 순서 No.${num} 배정`,
+          };
+        }
+        return c;
+      })
+    );
+  };
+
+  const handleJsonFileSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const content = event.target?.result as string;
+      if (content && onImportJson) {
+        onImportJson(content);
+        onClose();
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
   };
 
   const handleFilesSelected = (files: FileList | null) => {
@@ -215,16 +279,35 @@ export const BatchImageUploader: React.FC<BatchImageUploaderProps> = ({
           {/* 등록된 후보 리스트 */}
           {candidates.length > 0 && (
             <div className="space-y-3">
-              <div className="flex items-center justify-between text-xs font-black">
+              <div className="flex items-center justify-between text-xs font-black flex-wrap gap-2">
                 <span className="text-slate-700">
-                  선택된 파일: {candidates.length}개 (자동 매칭 완료: {matchedCount}개)
+                  선택된 파일: {candidates.length}개 (매칭 완료: {matchedCount}개)
                 </span>
-                <button
-                  onClick={() => setCandidates([])}
-                  className="text-red-500 hover:underline flex items-center gap-1"
-                >
-                  <Trash2 className="w-3.5 h-3.5" /> 목록 비우기
-                </button>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={handleSortAndAssign}
+                    className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition"
+                    title="파일명 가나다/자연수 정렬 후 1번부터 차례대로 배정"
+                  >
+                    🔤 파일명 정렬 후 1번부터 배정
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleAssignSequentially}
+                    className="px-2.5 py-1 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-bold transition"
+                    title="현재 파일 순서대로 No.1, No.2, No.3... 배정"
+                  >
+                    🔢 순서대로 1~66번 일괄 배정
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCandidates([])}
+                    className="text-red-500 hover:underline flex items-center gap-1 px-2 py-1"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" /> 목록 비우기
+                  </button>
+                </div>
               </div>
 
               <div className="border border-slate-200 rounded-2xl overflow-hidden max-h-72 overflow-y-auto divide-y divide-slate-100">
@@ -292,17 +375,50 @@ export const BatchImageUploader: React.FC<BatchImageUploaderProps> = ({
         </div>
 
         {/* 모달 하단 액션 바 */}
-        <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between">
-          <div className="text-xs text-slate-500 font-semibold">
-            현재 로컬 DB에 등록된 시트 이미지: <strong>{existingCount}개</strong>
+        <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs text-slate-500 font-semibold mr-1">
+              현재 등록된 사진: <strong>{existingCount}개</strong>
+            </span>
+
+            {/* 숨겨진 JSON 파일 인풋 */}
+            <input
+              ref={jsonFileInputRef}
+              type="file"
+              accept=".json"
+              onChange={handleJsonFileSelected}
+              className="hidden"
+            />
+
+            {onExportJson && existingCount > 0 && (
+              <button
+                type="button"
+                onClick={onExportJson}
+                className="px-2.5 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 text-xs font-bold transition flex items-center gap-1"
+                title="현재 등록된 1~66번 사진을 JSON 백업 파일로 다운로드합니다 (GitHub Pages 등으로 이동 시 사용)"
+              >
+                <span>📥 백업 JSON 다운로드</span>
+              </button>
+            )}
+
+            {onImportJson && (
+              <button
+                type="button"
+                onClick={() => jsonFileInputRef.current?.click()}
+                className="px-2.5 py-1 rounded-lg bg-slate-200 hover:bg-slate-300 text-slate-800 text-xs font-bold transition flex items-center gap-1"
+                title="기존에 백업한 JSON 파일을 선택하여 사진들을 한 번에 복원합니다"
+              >
+                <span>📤 백업 JSON 불러오기</span>
+              </button>
+            )}
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 self-end sm:self-auto">
             <button
               onClick={onClose}
               className="px-4 py-2.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 text-xs font-bold text-slate-700 transition"
             >
-              취소
+              닫기
             </button>
             <button
               disabled={matchedCount === 0 || isProcessing}

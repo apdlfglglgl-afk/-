@@ -9,7 +9,7 @@ import { TableView } from './components/TableView';
 import { BatchImageUploader } from './components/BatchImageUploader';
 import { ClipboardAssignModal } from './components/ClipboardAssignModal';
 import { getVisualDiagram } from './components/diagrams/TermDiagramMap';
-import { getAllTermImages, saveTermImage, deleteTermImage } from './utils/imageStorage';
+import { getAllTermImages, saveTermImage, deleteTermImage, exportTermImagesJson, importTermImagesFromJson } from './utils/imageStorage';
 import { extractImageFromPasteEvent, readImageFromClipboard } from './utils/clipboardHelper';
 import {
   Search,
@@ -52,11 +52,29 @@ export default function App() {
   // 실무 사진/시트 이미지 IndexedDB 연동 상태 (1~66번)
   const [customImages, setCustomImages] = useState<Record<number, string>>({});
 
-  // 초기 IndexedDB 저장 이미지 로드
+  // 초기 IndexedDB 저장 이미지 로드 (없을 경우 bundled JSON 자동 확인)
   useEffect(() => {
     getAllTermImages()
-      .then((imgs) => {
-        setCustomImages(imgs);
+      .then(async (imgs) => {
+        if (imgs && Object.keys(imgs).length > 0) {
+          setCustomImages(imgs);
+        } else {
+          // GitHub Pages 등 초기 접속 환경에서 정적 번들 JSON이 존재하는지 자동 탐색
+          try {
+            const res = await fetch('./term_images.json');
+            if (res.ok) {
+              const bundled = await res.json();
+              if (bundled && typeof bundled === 'object') {
+                for (const [no, url] of Object.entries(bundled)) {
+                  await saveTermImage(Number(no), url as string);
+                }
+                setCustomImages(bundled);
+              }
+            }
+          } catch {
+            // 정적 번들 파일이 없으면 정상 진행
+          }
+        }
       })
       .catch((err) => {
         console.error('Failed to load images from IndexedDB:', err);
@@ -102,6 +120,28 @@ export default function App() {
     } catch (e) {
       console.error(e);
       showToast('일괄 저장 중 오류가 발생했습니다.');
+    }
+  }, []);
+
+  // 사진 데이터 JSON 백업 다운로드
+  const handleExportJson = useCallback(() => {
+    if (Object.keys(customImages).length === 0) {
+      showToast('현재 등록된 사진이 없습니다.');
+      return;
+    }
+    exportTermImagesJson(customImages);
+    showToast(`총 ${Object.keys(customImages).length}개 사진의 백업 JSON 파일이 다운로드되었습니다.`);
+  }, [customImages]);
+
+  // 사진 데이터 JSON 파일 복원
+  const handleImportJson = useCallback(async (jsonString: string) => {
+    try {
+      const imported = await importTermImagesFromJson(jsonString);
+      setCustomImages((prev) => ({ ...prev, ...imported }));
+      showToast(`총 ${Object.keys(imported).length}개의 사진 데이터가 복원되었습니다!`);
+    } catch (e) {
+      console.error(e);
+      showToast('올바른 백업 JSON 형식이 아닙니다.');
     }
   }, []);
 
@@ -824,6 +864,8 @@ export default function App() {
         onClose={() => setIsBatchUploaderOpen(false)}
         onSaveBatch={handleSaveBatchImages}
         existingCount={Object.keys(customImages).length}
+        onExportJson={handleExportJson}
+        onImportJson={handleImportJson}
       />
 
       {/* 카드 지정 없이 전역 Ctrl+V 붙여넣기 시 열리는 빠른 카드 할당 모달 */}

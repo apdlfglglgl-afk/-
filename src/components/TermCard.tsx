@@ -153,7 +153,7 @@ export const TermCard: React.FC<TermCardProps> = ({
           customImage={customImage}
           onUploadImage={onUploadImage}
           onDeleteImage={onDeleteImage}
-          allowEdit={false}
+          allowEdit={true}
         />
       </div>
 

@@ -30,6 +30,17 @@ export const TermVisual: React.FC<TermVisualProps> = ({
     return !customImage; // 이미지가 있으면 이미지 우선, 없으면 SVG
   });
 
+  // customImage prop이 변경되거나 비동기로 로드되었을 때 자동으로 실사 이미지를 표시하도록 동기화
+  React.useEffect(() => {
+    if (preferredMode === 'svg') {
+      setShowSvg(true);
+    } else if (preferredMode === 'image') {
+      setShowSvg(false);
+    } else {
+      setShowSvg(!customImage);
+    }
+  }, [customImage, preferredMode]);
+
   const [isZoomed, setIsZoomed] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
