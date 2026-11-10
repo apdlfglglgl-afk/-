@@ -1,0 +1,6 @@
+{
+  "name": "반도체 공정 부품·소재 실무 용어 사전 66선",
+  "description": "반도체 쿼츠·실리콘·세라믹 가공, 세정, 에칭, 정밀측정 신입 엔지니어를 위한 66개 실무 용어 및 1:1 맞춤형 시각 도해 학습 시스템",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
